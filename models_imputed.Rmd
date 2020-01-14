@@ -1,0 +1,289 @@
+---
+title: "models_imputed"
+author: "Bushra Haque"
+date: '2020-01-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries:
+```{r warning=FALSE}
+library(mice)
+library(ggplot2)
+```
+
+Load data:
+```{r}
+file_path = 'pokemon.csv'
+df <- read.csv(file_path, stringsAsFactors=FALSE)
+```
+
+Discretionalize (or remove) categorical columns:
+```{r, message=FALSE, warning=FALSE}
+## remove specifid columns
+to_drop <- c('abilities', 'against_bug', 'against_dark', 'against_dragon',
+             'against_electric', 'against_fairy', 'against_fight', 'against_fire',
+             'against_flying', 'against_ghost', 'against_grss', 'against_grass',
+             'against_ground', 'against_ice', 'against_normal', 'against_poison',
+             'against_psychic', 'against_rock', 'against_steel', 'against_water')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = capture_rate 
+df$capture_rate <- as.integer(as.character(df$capture_rate))
+
+## column = classification 
+poke_unique <- unique(df$classfication)
+
+# remove poke_unique[525]
+df <- df[df$classfication != poke_unique[525],]
+
+# discretionalize
+n = 1
+for (poke_class in poke_unique) {
+  df$classfication[df$classfication == poke_class] <- n
+  n = n + 1
+}
+
+df$classfication <- as.integer(as.character(df$classfication))
+
+## column = japanese_name & name
+to_drop <- c('japanese_name', 'name')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = type1
+type1_unique <- unique(df$type1)
+
+# discretionalize 
+n = 1
+for (poke_type1 in type1_unique) {
+  df$type1[df$type1 == poke_type1] <- n
+  n = n + 1
+}
+
+df$type1 <- as.integer(as.character(df$type1))
+
+## column = type2
+type2_unique <- unique(df$type2)
+
+# fill empty with 0 i.e no second type
+df$type2[df$type2 == ''] <- 0
+new_type2_unique <- setdiff(type2_unique, c(0))
+
+# discretionalize 
+n = 1
+for (poke_type2 in new_type2_unique) {
+  df$type2[df$type2 == poke_type2] <- n
+  n = n + 1
+}
+
+df$type2 <- as.integer(as.character(df$type2))
+
+## column = pokedex_number
+to_drop <- c('pokedex_number')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## change legendary column name
+colnames(df)[colnames(df)=="is_legendary"] <- "lg"
+
+```
+
+Use MICE package to impute missing values 
+```{r}
+## Retrieve imputed datasets
+## no need to separate categorical var -> MICE will take care
+
+df_imp <- mice(df, m=5) # 5 iterations 
+```
+
+Step-Wise Model
+```{r}
+## the Step-Wise model will build from no variables, to the most significant variables
+## will remove or add variables as needed
+
+## done for each iteration
+for (i in 1:5) {
+  df_complete <- complete(df_imp,i)
+  model_lb <- lm(lg ~ 1, data=df_complete)
+  model_ub <- lm(lg ~ (.- capture_rate - height_m - percentage_male - weight_kg)^2 + 
+                   capture_rate + height_m + percentage_male + weight_kg,
+                 data=df_complete)
+  model_start <- lm(lg ~ ., data=df_complete)
+  
+  model_step <- step(object=model_start, 
+                     scope=list(
+                       lower=model_lb,
+                       upper=model_ub),
+                     direction='both', 
+                     trace=FALSE)
+  model_name <- paste('model_', i, sep='')
+  assign(model_name, model_step)
+}
+```
+
+
+Model Selection:
+```{r}
+## from models outputted 
+
+
+# imputation 1
+model_sw_1 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + classfication + defense + experience_growth + 
+                   height_m + hp + percentage_male + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation +
+                   base_total:experience_growth + base_total:classfication +
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 + 
+                   attack:base_happiness + base_total:sp_defense +
+                   base_egg_steps:sp_defense + experience_growth:hp + 
+                   base_total:type1 + hp:type1 + classfication:hp + 
+                   experience_growth:generation + base_happiness:type2 + 
+                   defense:type2 + attack:experience_growth + attack:type2 +
+                   base_happiness:hp + attack:sp_defense + base_total:generation + 
+                   classfication:generation + type1:type2, 
+                 data=complete(df_imp, 1))
+
+
+# imputation 2
+model_sw_2 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + capture_rate + classfication + defense +
+                   experience_growth + height_m + hp + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation + 
+                   base_total:experience_growth + base_total:classfication + 
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 + 
+                   base_total:sp_defense + base_total:type1 + 
+                   attack:base_happiness + base_egg_steps:sp_defense + 
+                   experience_growth:hp + hp:type1 + classfication:hp +
+                   experience_growth:generation + base_happiness:type2 + 
+                   defense:type2 + attack:experience_growth + attack:type2 +
+                   base_happiness:hp + attack:sp_defense + base_total:generation + 
+                   classfication:generation + type1:type2, 
+                 data=complete(df_imp, 2))
+
+
+# imputation 3
+model_sw_3 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + classfication + defense + experience_growth + 
+                   height_m + hp + percentage_male + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation +
+                   base_total:experience_growth + base_total:classfication +
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 +   
+                   base_total:sp_defense + base_egg_steps:sp_defense + 
+                   experience_growth:hp + base_total:type1 + hp:type1 +
+                   classfication:hp + experience_growth:generation +
+                   base_happiness:type2 + defense:type2 + attack:experience_growth +
+                   attack:type2 + attack:sp_defense + classfication:generation + 
+                   base_happiness:experience_growth + base_egg_steps:base_happiness + 
+                   base_happiness:type1 + defense:experience_growth + 
+                   base_happiness:sp_attack + attack:base_egg_steps + defense:hp + 
+                   defense:generation + base_egg_steps:base_total + hp:sp_defense + 
+                   classfication:experience_growth, 
+                 data=complete(df_imp, 3))
+
+
+# imputation 4
+model_sw_4 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + classfication + defense + experience_growth + 
+                   height_m + hp + percentage_male + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation +
+                   base_total:experience_growth + base_total:classfication + 
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 + 
+                   base_total:sp_defense + base_total:type1 + attack:base_happiness + 
+                   base_egg_steps:sp_defense + experience_growth:hp + hp:type1 + 
+                   classfication:hp + base_happiness:type2 + 
+                   experience_growth:generation + defense:type2 +
+                   attack:experience_growth + attack:type2 + attack:sp_defense + 
+                   classfication:generation + base_happiness:experience_growth + 
+                   base_egg_steps:base_happiness + base_happiness:type1 + 
+                   base_happiness:sp_attack + defense:experience_growth + 
+                   defense:hp + defense:generation + classfication:type2, 
+                 data=complete(df_imp, 4))
+
+
+# imputation 5
+model_sw_5 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + classfication + defense + experience_growth + 
+                   height_m + hp + percentage_male + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation +
+                   base_total:experience_growth + base_total:classfication +
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 + 
+                   base_total:sp_defense + base_egg_steps:sp_defense + 
+                   experience_growth:hp + base_total:type1 + hp:type1 + 
+                   classfication:hp + experience_growth:generation + 
+                   base_happiness:type2 + defense:type2 + attack:experience_growth + 
+                   attack:type2 + base_happiness:hp + attack:sp_defense + 
+                   classfication:generation + base_happiness:experience_growth + 
+                   base_egg_steps:base_happiness + base_happiness:type1 + 
+                   base_happiness:sp_attack + defense:experience_growth + 
+                   attack:base_egg_steps + base_egg_steps:defense + 
+                   base_happiness:defense + base_egg_steps:classfication + 
+                   defense:generation + base_total:sp_attack, 
+                 data=complete(df_imp, 5))
+```
+
+Statistics for above models:
+```{r}
+
+## RSEs
+rse_sw_1 <- sigma(model_sw_1)
+rse_sw_2 <- sigma(model_sw_2)
+rse_sw_3 <- sigma(model_sw_3)
+rse_sw_4 <- sigma(model_sw_4)
+rse_sw_5 <- sigma(model_sw_5)
+
+## Adjusted R-squares values
+adjr2_sw_1 <- summary(model_sw_1)$adj.r.squared
+adjr2_sw_2 <- summary(model_sw_2)$adj.r.squared
+adjr2_sw_3 <- summary(model_sw_3)$adj.r.squared
+adjr2_sw_4 <- summary(model_sw_4)$adj.r.squared
+adjr2_sw_5 <- summary(model_sw_5)$adj.r.squared
+
+## AICs
+aic_sw_1 <- AIC(model_sw_1)
+aic_sw_2 <- AIC(model_sw_2)
+aic_sw_3 <- AIC(model_sw_3)
+aic_sw_4 <- AIC(model_sw_4)
+aic_sw_5 <- AIC(model_sw_5)
+
+## model stats 
+
+model_sw_stats <- matrix(c(rse_sw_1, adjr2_sw_1, aic_sw_1,
+                           rse_sw_2, adjr2_sw_2, aic_sw_2,
+                           rse_sw_3, adjr2_sw_3, aic_sw_3,
+                           rse_sw_4, adjr2_sw_4, aic_sw_4,
+                           rse_sw_5, adjr2_sw_5, aic_sw_5),
+                         nrow=3, 
+                         ncol=5)
+colnames(model_sw_stats) <- c('Stepwise Model 1',
+                           'Stepwise Model 2',
+                           'Stepwise Model 3',
+                           'Stepwise Model 4', 
+                           'Stepwise Model 5')
+rownames(model_sw_stats) <- c('RSE', 'Adjusted R^2', 'AIC')
+model_sw_stats
+
+# RSE: model 5 has the lowest relative value
+# Adjusted R^2: model 5 has the highest relative alue
+# AIC: model 5 has the lowest relative value
+
+## Select model
+model_step <- model_sw_5
+```
+
+
+
+
+
+
+
+
+
+
+

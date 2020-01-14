@@ -1,0 +1,295 @@
+---
+title: "data_exploration""
+author: "Bushra Haque"
+date: '2020-01-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Load libraries: 
+```{r, message=FALSE}
+library(mice)
+library(ggplot2)
+```
+
+Load data:
+```{r}
+file_path = 'pokemon.csv'
+df <- read.csv(file_path, stringsAsFactors=FALSE)
+```
+
+Discretionalize (or remove) categorical columns:
+```{r, message=FALSE, warning=FALSE}
+## column = abilities
+to_drop <- c('abilities', 'against_bug', 'against_dark', 'against_dragon',
+             'against_electric', 'against_fairy', 'against_fight', 'against_fire',
+             'against_flying', 'against_ghost', 'against_grss', 'against_grass',
+             'against_ground', 'against_ice', 'against_normal', 'against_poison',
+             'against_psychic', 'against_rock', 'against_steel', 'against_water')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = capture_rate 
+df$capture_rate <- as.integer(as.character(df$capture_rate))
+
+## column = classification 
+poke_unique <- unique(df$classfication)
+poke_unique
+
+# remove poke_unique[525]
+poke_unique[525]
+df <- df[df$classfication != poke_unique[525],]
+
+# discretionalize
+n = 1
+for (poke_class in poke_unique) {
+  df$classfication[df$classfication == poke_class] <- n
+  n = n + 1
+}
+
+df$classfication <- as.integer(as.character(df$classfication))
+
+## column = japanese_name & name
+to_drop <- c('japanese_name', 'name')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = type1
+type1_unique <- unique(df$type1)
+type1_unique
+
+# discretionalize 
+n = 1
+for (poke_type1 in type1_unique) {
+  df$type1[df$type1 == poke_type1] <- n
+  n = n + 1
+}
+
+df$type1 <- as.integer(as.character(df$type1))
+
+## column = type2
+type2_unique <- unique(df$type2)
+type2_unique
+
+# fill empty with 0 i.e no second type
+df$type2[df$type2 == ''] <- 0
+new_type2_unique <- setdiff(type2_unique, c(0))
+
+# discretionalize 
+n = 1
+for (poke_type2 in new_type2_unique) {
+  df$type2[df$type2 == poke_type2] <- n
+  n = n + 1
+}
+
+df$type2 <- as.integer(as.character(df$type2))
+
+## column = pokedex_number
+to_drop <- c('pokedex_number')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## change legendary column name
+colnames(df)[colnames(df)=="is_legendary"] <- "lg"
+
+```
+
+Deal with NA Values (for manual model):
+```{r}
+## create copy to work on for manual value imputation 
+df_manual <- df
+
+## view NAs
+sapply(df_manual, function(x) sum(is.na(x)))
+
+unique(df_manual$capture_rate)
+unique(df_manual$height_m)
+unique(df_manual$weight_kg)
+unique(df_manual$percentage_male)
+
+## remove row with capture_rate == NA
+df_manual <- df_manual[!is.na(df_manual$capture_rate),]
+
+## fill with mean for height_m, weight_kg
+height_mean <- mean(df_manual$height_m, na.rm=TRUE)
+df_manual$height_m[is.na(df_manual$height_m)] <- round(height_mean, digits=1)
+
+weight_mean <- mean(df_manual$weight_kg, na.rm=TRUE)
+df_manual$weight_kg[is.na(df_manual$weight_kg)] <- round(weight_mean, digits=1)
+
+## fill percentage_male with 50%
+df_manual$percentage_male[is.na(df_manual$percentage_male)] <- 50.0
+
+## check
+sum(is.na(df_manual))
+```
+
+Data Visualization:
+```{r}
+# Distribution of Legendary Pokémon, 0=regular, 1=legendary
+hist(df$lg)
+
+# Correlation plots for numerical quantities, minus stats against other types
+pairs(df[,c('attack', 'base_egg_steps', 'base_happiness', 'base_total',
+            'capture_rate', 'defense', 'experience_growth', 'height_m', 
+            'hp', 'percentage_male', 'sp_attack', 'sp_defense', 'speed',
+            'weight_kg')], pch=15, cex=0.3)
+
+# base_egg_steps, base_happiness, capture_rate, experience_growth, percentage_male all seeem to be categorical 
+
+# Updated correlation plots
+pairs(df[,c('attack', 'base_total', 'defense', 'height_m', 
+            'hp', 'sp_attack', 'sp_defense', 'speed', 'weight_kg')], 
+      pch=15, cex=0.3)
+```
+
+Manual Model:
+```{r}
+
+## Define model
+model_manual <- lm(lg ~ attack + base_egg_steps + base_happiness + base_total + 
+                     capture_rate + classfication + defense + experience_growth + 
+                     height_m + hp + percentage_male + sp_attack + sp_defense + 
+                     speed + type1 + type2 + weight_kg + generation + 
+                     attack:defense + base_egg_steps:base_happiness +
+                     base_egg_steps:base_total + base_happiness:base_total + 
+                     height_m:weight_kg + sp_attack:sp_defense + speed:attack + 
+                     speed:defense, data=df_manual)
+
+## Important model stats
+rse_manual <- sigma(model_manual)
+adjr2_manual <- summary(model_manual)$adj.r.squared
+aic_manual<- AIC(model_manual)
+
+model_manual_stats <- matrix(c(rse_manual, adjr2_manual, aic_manual),
+                         nrow=3, 
+                         ncol=1)
+
+colnames(model_manual_stats) <- c('Manual Model')
+rownames(model_manual_stats) <- c('RSE', 'Adjusted R^2', 'AIC')
+
+model_manual_stats
+```
+
+Selected model:
+```{r}
+## from models_imputed.rmd
+
+## Define model:
+model_selected <- lm(formula = lg ~ attack + base_egg_steps + base_happiness + 
+                       base_total + classfication + defense + experience_growth + 
+                       height_m + hp + percentage_male + sp_attack + sp_defense + 
+                       type1 + type2 + weight_kg + generation +
+                       base_total:experience_growth + base_total:classfication +
+                       base_egg_steps:generation + base_egg_steps:experience_growth + 
+                       experience_growth:type1 + base_egg_steps:type1 + 
+                       base_total:sp_defense + base_egg_steps:sp_defense + 
+                       experience_growth:hp + base_total:type1 + hp:type1 + 
+                       classfication:hp + experience_growth:generation + 
+                       base_happiness:type2 + defense:type2 + attack:experience_growth + 
+                       attack:type2 + base_happiness:hp + attack:sp_defense + 
+                       classfication:generation + base_happiness:experience_growth + 
+                       base_egg_steps:base_happiness + base_happiness:type1 + 
+                       base_happiness:sp_attack + defense:experience_growth + 
+                       attack:base_egg_steps + base_egg_steps:defense + 
+                       base_happiness:defense + base_egg_steps:classfication + 
+                       defense:generation + base_total:sp_attack,
+                     data = complete(df_imp, 5))
+
+# Important model stats:
+rse_selected <- sigma(model_selected)
+adjr2_selected <- summary(model_selected)$adj.r.squared
+aic_selected <- AIC(model_selected)
+
+model_selected_sw_stats <- matrix(c(rse_selected, adjr2_selected, aic_selected),
+                         nrow=3, 
+                         ncol=1)
+
+colnames(model_selected_sw_stats) <- c('Selected Stepwise Model 5')
+rownames(model_selected_sw_stats) <- c('RSE', 'Adjusted R^2', 'AIC')
+
+model_selected_sw_stats
+```
+
+Cross validation:
+```{r}
+
+## for both selected and manual models i.e. model_manual, model_selected
+
+# assign models 
+M_m <- model_manual # uses df_manual
+M_s <- model_selected # uses combine(df_imp, 5) = df_complete
+
+# variable defs for splitting data into train and test
+num_reps <- 2000
+num_poke <- nrow(df)
+
+sz <- 0.2 # try 0.1, 0.15
+test_size <- sz*num_poke
+train_size <-(1-sz)*num_poke
+
+# storing important stats from models 
+cv_stats <- rep(NA, num_reps*8)
+dim(cv_stats) <- c(8, num_reps)
+rownames(cv_stats) <- c('res_m', 'res_s',
+                        'mspe_m', 'mspe_s',
+                        'rse_m', 'rse_m',
+                        'logL_m', 'logL_s')
+colnames(cv_stats) <- c(1:num_reps)
+
+# loop through replications, add model stats to stats
+for (i in 1:num_reps) {
+  # split into train and test, for manual
+  train_ind <- sample(num_poke, train_size)
+  
+  m_train_x <- df_manual[train_ind, ]
+  s_train_x <- df_complete[train_ind, ]
+  
+  m_test_x <- df_manual[-train_ind,]
+  s_test_x <- df_complete[-train_ind,]
+  
+  # refit model using specific train_x
+  M_m.cv_fit <- update(M_m, subset=m_train_x)
+  M_s.cv_fit <- update(M_s, subset=s_train_x)
+  
+  # predictions
+  M_m.pred <- predict(M_m.cv_fit, newdata=m_test_x)
+  M_s.pred <- predict(M_s.cv_fit, newdata=s_test_x)
+  
+  # res stats 
+  M_m.res_val <- test_x$lg - M_m.pred
+  M_s.res_val <- test_x$lg - M_s.pred
+
+  
+  # mspe stats 
+  M_m.mspe_val <- mean(M_m.res_val^2)
+  M_s.mspe_val <- mean(M_s.res_val^2)
+  
+
+  # rse stats 
+  M_m.rse_val <- sqrt(sum(resid(M_m.cv_fit)^2)
+                      /train_size)
+  M_s.rse_val <- sqrt(sum(resid(M_s.cv_fit)^2)
+                      /train_size)
+  
+  # log likelihood ratio, using normalized values
+  M_m.logL_val <- sum(dnorm(M_m, 
+                            mean=0, 
+                            sd=M_m.rse_val, 
+                            log=TRUE))
+  M_s.logL_val <- sum(dnorm(M_s, 
+                            mean=0, 
+                            sd=M_s.rse_val, 
+                            log=TRUE))
+  
+  # add stats to cv_stats
+  cv_stats[1, i] <- M_m.res_val
+  cv_stats[2, i] <- M_s.res_val
+  cv_stats[3, i] <- M_m.mspe_val
+  cv_stats[4, i] <- M_s.mspe_val
+  cv_stats[5, i] <- M_m.rse_val
+  cv_stats[6, i] <- M_s.rse_val
+  cv_stats[7, i] <- M_m.logL_val
+  cv_stats[8, i] <- M_m.logL_val
+}
+```
+

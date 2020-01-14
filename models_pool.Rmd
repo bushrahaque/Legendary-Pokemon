@@ -1,0 +1,155 @@
+---
+title: "models_pool"
+author: "Bushra Haque"
+date: '2020-01-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Load libraries:
+```{r warning=FALSE}
+library(mice)
+library(ggplot2)
+```
+
+Load data:
+```{r}
+file_path = 'pokemon.csv'
+df <- read.csv(file_path, stringsAsFactors=FALSE)
+```
+
+Discretionalize (or remove) categorical columns:
+```{r, message=FALSE, warning=FALSE}
+## remove specifid columns
+to_drop <- c('abilities', 'against_bug', 'against_dark', 'against_dragon',
+             'against_electric', 'against_fairy', 'against_fight', 'against_fire',
+             'against_flying', 'against_ghost', 'against_grss', 'against_grass',
+             'against_ground', 'against_ice', 'against_normal', 'against_poison',
+             'against_psychic', 'against_rock', 'against_steel', 'against_water')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = capture_rate 
+df$capture_rate <- as.integer(as.character(df$capture_rate))
+
+## column = classification 
+poke_unique <- unique(df$classfication)
+
+# remove poke_unique[525]
+df <- df[df$classfication != poke_unique[525],]
+
+# discretionalize
+n = 1
+for (poke_class in poke_unique) {
+  df$classfication[df$classfication == poke_class] <- n
+  n = n + 1
+}
+
+df$classfication <- as.integer(as.character(df$classfication))
+
+## column = japanese_name & name
+to_drop <- c('japanese_name', 'name')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## column = type1
+type1_unique <- unique(df$type1)
+
+# discretionalize 
+n = 1
+for (poke_type1 in type1_unique) {
+  df$type1[df$type1 == poke_type1] <- n
+  n = n + 1
+}
+
+df$type1 <- as.integer(as.character(df$type1))
+
+## column = type2
+type2_unique <- unique(df$type2)
+
+# fill empty with 0 i.e no second type
+df$type2[df$type2 == ''] <- 0
+new_type2_unique <- setdiff(type2_unique, c(0))
+
+# discretionalize 
+n = 1
+for (poke_type2 in new_type2_unique) {
+  df$type2[df$type2 == poke_type2] <- n
+  n = n + 1
+}
+
+df$type2 <- as.integer(as.character(df$type2))
+
+## column = pokedex_number
+to_drop <- c('pokedex_number')
+df <- df[ , !(names(df) %in% to_drop)]
+
+## change legendary column name
+colnames(df)[colnames(df)=="is_legendary"] <- "lg"
+
+```
+
+Use MICE package to impute missing values 
+```{r}
+## Retrieve imputed datasets
+## no need to separate categorical var -> MICE will take care
+
+df_imp <- mice(df, m=5) # 5 iterations 
+```
+
+Build new model on all 5 imputations:
+```{r}
+# Define model using selected stepwise model 5
+
+# imputation 5
+model_sw_5 <- lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                   base_total + classfication + defense + experience_growth + 
+                   height_m + hp + percentage_male + sp_attack + sp_defense + 
+                   type1 + type2 + weight_kg + generation +
+                   base_total:experience_growth + base_total:classfication +
+                   base_egg_steps:generation + base_egg_steps:experience_growth + 
+                   experience_growth:type1 + base_egg_steps:type1 + 
+                   base_total:sp_defense + base_egg_steps:sp_defense + 
+                   experience_growth:hp + base_total:type1 + hp:type1 + 
+                   classfication:hp + experience_growth:generation + 
+                   base_happiness:type2 + defense:type2 + attack:experience_growth + 
+                   attack:type2 + base_happiness:hp + attack:sp_defense + 
+                   classfication:generation + base_happiness:experience_growth + 
+                   base_egg_steps:base_happiness + base_happiness:type1 + 
+                   base_happiness:sp_attack + defense:experience_growth + 
+                   attack:base_egg_steps + base_egg_steps:defense + 
+                   base_happiness:defense + base_egg_steps:classfication + 
+                   defense:generation + base_total:sp_attack, 
+                 data=complete(df_imp, 5))
+
+# Fit model
+fit.sw_model_final <- with(data=df_imp,
+                           exp=lm(formula=lg ~ attack + base_egg_steps + base_happiness + 
+                                    base_total + classfication + defense + experience_growth +
+                                    height_m + hp + percentage_male + sp_attack + sp_defense +
+                                    type1 + type2 + weight_kg + generation +
+                                    base_total:experience_growth + base_total:classfication +
+                                    base_egg_steps:generation +
+                                    base_egg_steps:experience_growth +
+                                    experience_growth:type1 + base_egg_steps:type1 +
+                                    base_total:sp_defense + base_egg_steps:sp_defense +
+                                    experience_growth:hp + base_total:type1 + hp:type1 +
+                                    classfication:hp + experience_growth:generation +
+                                    base_happiness:type2 + defense:type2 + 
+                                    attack:experience_growth + attack:type2 + 
+                                    base_happiness:hp + attack:sp_defense + 
+                                    classfication:generation +
+                                    base_happiness:experience_growth + 
+                                    base_egg_steps:base_happiness + base_happiness:type1 + 
+                                    base_happiness:sp_attack + defense:experience_growth +
+                                    attack:base_egg_steps + base_egg_steps:defense +
+                                    base_happiness:defense + base_egg_steps:classfication + 
+                                    defense:generation + base_total:sp_attack))
+
+combined <- pool(fit.sw_model_final)
+summary(combined)
+
+# other stats
+pool.r.squared(fit.sw_model_final)
+```
+
